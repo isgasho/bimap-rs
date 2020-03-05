@@ -76,64 +76,9 @@
 //! data. Unlike a `HashMap` or `BTreeMap`, which [doesn't update an equal key upon insertion], a
 //! bimap updates both the left values and the right values.
 //!
-//! ```
-//! use bimap::{BiMap, Overwritten};
-//! use std::hash::{Hash, Hasher};
-//!
-//! #[derive(Clone, Copy, Debug)]
-//! struct Foo {
-//!     important: char,
-//!     unimportant: u32,
-//! }
-//!
-//! // equality only depends on the important data
-//! impl PartialEq for Foo {
-//!     fn eq(&self, other: &Foo) -> bool {
-//!         self.important == other.important
-//!     }
-//! }
-//!
-//! impl Eq for Foo {}
-//!
-//! // hash only depends on the important data
-//! impl Hash for Foo {
-//!     fn hash<H: Hasher>(&self, state: &mut H) {
-//!         self.important.hash(state);
-//!     }
-//! }
-//!
-//! // create two Foos that are equal but have different data
-//! let foo1 = Foo {
-//!     important: 'a',
-//!     unimportant: 1,
-//! };
-//! let foo2 = Foo {
-//!     important: 'a',
-//!     unimportant: 2,
-//! };
-//! assert_eq!(foo1, foo2);
-//!
-//! // insert both Foos into a bimap
-//! let mut bimap = BiMap::new();
-//! bimap.insert(foo1, 99);
-//! let overwritten = bimap.insert(foo2, 100);
-//!
-//! // foo1 is overwritten and returned
-//! match overwritten {
-//!     Overwritten::Left(foo, 99) => assert_eq!(foo.unimportant, foo1.unimportant),
-//!     _ => unreachable!(),
-//! };
-//!
-//! // foo2 is in the bimap
-//! assert_eq!(
-//!     bimap.get_by_right(&100).unwrap().unimportant,
-//!     foo2.unimportant
-//! );
-//! ```
-//!
-//! Note that the `FromIterator` implementations for both `BiHashMap` and `BiBTreeMap` use the
-//! `insert` method internally, meaning that values from the original iterator can be silently
-//! overwritten.
+//! Note that the `FromIterator` implementations for both `BiHashMap` and
+//! `BiBTreeMap` use the `insert` method internally, meaning that values from the original iterator
+//! can be silently overwritten.
 //!
 //! ```
 //! use bimap::BiMap;
@@ -170,29 +115,26 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        pub mod btree;
-        pub mod hash;
-
-        /// Type definition for convenience and compatibility with older versions of this crate.
-        pub type BiMap<L, R> = BiHashMap<L, R>;
-
-        pub use self::{btree::BiBTreeMap, hash::BiHashMap};
-    } else {
-        extern crate alloc;
-
-        pub mod btree;
-
-        /// Type definition for convenience and compatibility with older versions of this crate.
-        pub type BiMap<L, R> = BiBTreeMap<L, R>;
-
-        pub use self::btree::BiBTreeMap;
-    }
-}
-
+pub mod btree;
+#[cfg(feature = "std")]
+pub mod hash;
 #[cfg(all(feature = "serde", feature = "std"))]
 pub mod serde;
+
+pub use self::btree::BiBTreeMap;
+#[cfg(feature = "std")]
+pub use self::hash::BiHashMap;
+
+/// Type definition for convenience and compatibility with older versions of this crate.
+#[cfg(feature = "std")]
+pub type BiMap<L, R> = BiHashMap<L, R>;
+
+/// Type definition for convenience and compatibility with older versions of this crate.
+#[cfg(not(feature = "std"))]
+pub type BiMap<L, R> = BiBTreeMap<L, R>;
+
+#[cfg(not(feature = "std"))]
+extern crate alloc;
 
 /// The previous left-right pairs, if any, that were overwritten by a call to the
 /// [`insert`](BiHashMap::insert) method of a bimap.
@@ -251,5 +193,82 @@ mod tests {
         assert_eq!(Overwritten::Right('a', 1).did_overwrite(), true);
         assert_eq!(Overwritten::Pair('a', 1).did_overwrite(), true);
         assert_eq!(Overwritten::Both(('a', 1), ('b', 2)).did_overwrite(), true);
+    }
+}
+
+#[cfg(test)]
+mod special {
+    use super::*;
+
+    #[cfg(feature = "std")]
+    use std::hash::{Hash, Hasher};
+
+    use core::cmp::Ordering;
+
+    #[derive(Clone, Copy, Debug)]
+    struct Foo {
+        important: char,
+        unimportant: u32,
+    }
+
+    impl Eq for Foo {}
+
+    impl Ord for Foo {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.important.cmp(&other.important)
+        }
+    }
+
+    impl PartialEq for Foo {
+        fn eq(&self, other: &Foo) -> bool {
+            self.important == other.important
+        }
+    }
+
+    impl PartialOrd for Foo {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            self.important.partial_cmp(&other.important)
+        }
+    }
+
+    #[cfg(feature = "std")]
+    impl Hash for Foo {
+        fn hash<H>(&self, state: &mut H)
+        where
+            H: Hasher,
+        {
+            self.important.hash(state);
+        }
+    }
+
+    #[test]
+    fn test() {
+        // create two Foos that are equal but have different data
+        let foo1 = Foo {
+            important: 'a',
+            unimportant: 1,
+        };
+        let foo2 = Foo {
+            important: 'a',
+            unimportant: 2,
+        };
+        assert_eq!(foo1, foo2);
+
+        // insert both Foos into a bimap
+        let mut bimap = BiMap::new();
+        bimap.insert(foo1, 99);
+        let overwritten = bimap.insert(foo2, 100);
+
+        // foo1 is overwritten and returned
+        match overwritten {
+            Overwritten::Left(foo, 99) => assert_eq!(foo.unimportant, foo1.unimportant),
+            _ => unreachable!(),
+        };
+
+        // foo2 is in the bimap
+        assert_eq!(
+            bimap.get_by_right(&100).unwrap().unimportant,
+            foo2.unimportant
+        );
     }
 }
