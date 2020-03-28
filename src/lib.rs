@@ -113,6 +113,8 @@
 //! [`insert`]: BiHashMap::insert
 //! [`insert_no_overwrite`]: BiHashMap::insert_no_overwrite
 
+// #![cfg_attr(feature = "nightly", btreemap_remove_entry)]
+#![feature(btreemap_remove_entry)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod btree;
