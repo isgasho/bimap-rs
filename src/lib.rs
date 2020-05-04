@@ -1,12 +1,8 @@
 mod internal;
-mod ordered;
-mod unordered;
+pub mod ordered;
+pub mod unordered;
 
-use crate::internal::Map;
-pub use crate::{
-    ordered::{Ordered, OrderedMap},
-    unordered::{Unordered, UnorderedMap},
-};
+use crate::{internal::Map, ordered::Ordered, unordered::Unordered};
 use std::hash::Hash;
 
 pub trait MapKind<K, V> {
@@ -15,6 +11,14 @@ pub trait MapKind<K, V> {
 
 pub type BiBTreeMap<L, R> = BiMap<L, R, Ordered, Ordered>;
 pub type BiHashMap<L, R> = BiMap<L, R, Unordered, Unordered>;
+
+pub enum Overwritten<L, R> {
+    Neither,
+    Left(L, R),
+    Right(L, R),
+    Pair(L, R),
+    Both((L, R), (L, R)),
+}
 
 pub struct BiMap<L, R, LMap = Unordered, RMap = Unordered>
 where
@@ -34,6 +38,8 @@ where
 
 impl<L, R, LMap, RMap> BiMap<L, R, LMap, RMap>
 where
+    L: Eq,
+    R: Eq,
     LMap: MapKind<L, R>,
     RMap: MapKind<R, L>,
 {
@@ -44,12 +50,29 @@ where
         }
     }
 
+    pub fn len(&self) -> usize {
+        debug_assert_eq!(self.left_map.len(), self.right_map.len());
+        self.left_map.len()
+    }
+
     pub fn get_by_left(&mut self, left: &L) -> Option<&R> {
         self.left_map.get(left).map(|ptr| unsafe { &*ptr })
     }
 
     pub fn get_by_right(&mut self, right: &R) -> Option<&L> {
         self.right_map.get(right).map(|ptr| unsafe { &*ptr })
+    }
+
+    pub fn contains_left(&mut self, left: &L) -> bool {
+        self.left_map.contains_key(left)
+    }
+
+    pub fn contains_right(&mut self, right: &R) -> bool {
+        self.right_map.contains_key(right)
+    }
+
+    pub fn contains_pair(&mut self, left: &L, right: &R) -> bool {
+        self.contains_left(left) && self.contains_right(right)
     }
 
     pub fn remove_by_left(&mut self, left: &L) -> Option<(L, R)> {
@@ -62,7 +85,45 @@ where
             })
     }
 
-    pub fn insert_unchecked(&mut self, left: L, right: R) {
+    pub fn remove_by_right(&mut self, right: &R) -> Option<(L, R)> {
+        self.right_map
+            .remove_entry(right)
+            .map(|(right_box, left_ptr)| {
+                let left_ref = unsafe { &*left_ptr };
+                let (left_box, _right_ptr) = self.left_map.remove_entry(left_ref).unwrap();
+                (*left_box, *right_box)
+            })
+    }
+
+    pub fn insert(&mut self, left: L, right: R) -> Overwritten<L, R> {
+        let overwritten = match (self.remove_by_left(&left), self.remove_by_right(&right)) {
+            (None, None) => Overwritten::Neither,
+            (None, Some((l, r))) => Overwritten::Right(l, r),
+            (Some((l, r)), None) => {
+                // since remove_by_left() was called first, it's possible the right value was
+                // removed if a duplicate pair is being inserted
+                if r == right {
+                    Overwritten::Pair(l, r)
+                } else {
+                    Overwritten::Left(l, r)
+                }
+            }
+            (Some(left_pair), Some(right_pair)) => Overwritten::Both(left_pair, right_pair),
+        };
+        self.insert_unchecked(left, right);
+        overwritten
+    }
+
+    pub fn try_insert(&mut self, left: L, right: R) -> Result<(), (L, R)> {
+        if self.contains_left(&left) || self.contains_right(&right) {
+            Err((left, right))
+        } else {
+            self.insert_unchecked(left, right);
+            Ok(())
+        }
+    }
+
+    fn insert_unchecked(&mut self, left: L, right: R) {
         let left_box = Box::new(left);
         let right_box = Box::new(right);
 

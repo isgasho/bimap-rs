@@ -23,6 +23,14 @@ where
         Self(BTreeMap::new())
     }
 
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn contains_key(&self, key: &K) -> bool {
+        self.0.contains_key(key)
+    }
+
     fn get(&self, key: &K) -> Option<*const V> {
         self.0.get(key).copied()
     }

@@ -58,6 +58,14 @@ where
         }
     }
 
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn contains_key(&self, key: &K) -> bool {
+        self.inner.contains_key(key)
+    }
+
     fn get(&self, key: &K) -> Option<*const V> {
         self.inner.get(key).copied()
     }
