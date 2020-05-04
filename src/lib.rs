@@ -1,120 +1,95 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    hash::Hash,
+mod internal;
+mod ordered;
+mod unordered;
+
+use crate::internal::Map;
+pub use crate::{
+    ordered::{Ordered, OrderedMap},
+    unordered::{Unordered, UnorderedMap},
 };
-
-pub trait Map {
-    type Key;
-    type Value;
-
-    fn new() -> Self;
-    fn get(&self, key: &Self::Key) -> Option<&Self::Value>;
-    fn insert(&mut self, key: Self::Key, value: Self::Value) -> Option<Self::Value>;
-    fn remove(&mut self, key: &Self::Key) -> Option<(Self::Key, Self::Value)>;
-}
+use std::hash::Hash;
 
 pub trait MapKind<K, V> {
     type Map: Map<Key = K, Value = V>;
 }
 
-pub struct OrderedMap<K, V> {
-    inner: BTreeMap<K, V>,
+pub type BiBTreeMap<L, R> = BiMap<L, R, Ordered, Ordered>;
+pub type BiHashMap<L, R> = BiMap<L, R, Unordered, Unordered>;
+
+pub struct BiMap<L, R, LMap = Unordered, RMap = Unordered>
+where
+    LMap: MapKind<L, R>,
+    RMap: MapKind<R, L>,
+{
+    left_map: LMap::Map,
+    right_map: RMap::Map,
 }
 
-impl<K, V> Map for OrderedMap<K, V>
+impl<L, R> BiHashMap<L, R>
 where
-    K: Ord,
+    L: Eq + Hash,
+    R: Eq + Hash,
 {
-    type Key = K;
-    type Value = V;
+}
 
-    fn new() -> Self {
+impl<L, R, LMap, RMap> BiMap<L, R, LMap, RMap>
+where
+    LMap: MapKind<L, R>,
+    RMap: MapKind<R, L>,
+{
+    pub fn new() -> Self {
         Self {
-            inner: BTreeMap::new(),
+            left_map: LMap::Map::new(),
+            right_map: RMap::Map::new(),
         }
     }
 
-    fn get(&self, key: &K) -> Option<&V> {
-        self.inner.get(key)
+    pub fn get_by_left(&mut self, left: &L) -> Option<&R> {
+        self.left_map.get(left).map(|ptr| unsafe { &*ptr })
     }
 
-    fn insert(&mut self, key: K, value: V) -> Option<V> {
-        self.inner.insert(key, value)
+    pub fn get_by_right(&mut self, right: &R) -> Option<&L> {
+        self.right_map.get(right).map(|ptr| unsafe { &*ptr })
     }
 
-    fn remove(&mut self, key: &K) -> Option<(K, V)> {
-        self.inner.remove_entry(key)
-    }
-}
-
-pub struct UnorderedMap<K, V> {
-    inner: HashMap<K, V>,
-}
-
-impl<K, V> Map for UnorderedMap<K, V>
-where
-    K: Eq + Hash,
-{
-    type Key = K;
-    type Value = V;
-
-    fn new() -> Self {
-        Self {
-            inner: HashMap::new(),
-        }
+    pub fn remove_by_left(&mut self, left: &L) -> Option<(L, R)> {
+        self.left_map
+            .remove_entry(left)
+            .map(|(left_box, right_ptr)| {
+                let right_ref = unsafe { &*right_ptr };
+                let (right_box, _left_ptr) = self.right_map.remove_entry(right_ref).unwrap();
+                (*left_box, *right_box)
+            })
     }
 
-    fn get(&self, key: &K) -> Option<&V> {
-        self.inner.get(key)
+    pub fn insert_unchecked(&mut self, left: L, right: R) {
+        let left_box = Box::new(left);
+        let right_box = Box::new(right);
+
+        let left_ptr: *const L = &*left_box;
+        let right_ptr: *const R = &*right_box;
+
+        self.left_map.insert(left_box, right_ptr);
+        self.right_map.insert(right_box, left_ptr);
     }
-
-    fn insert(&mut self, key: K, value: V) -> Option<V> {
-        self.inner.insert(key, value)
-    }
-
-    fn remove(&mut self, key: &K) -> Option<(K, V)> {
-        self.inner.remove_entry(key)
-    }
-}
-
-pub struct OrderedMapKind;
-
-impl<K, V> MapKind<K, V> for OrderedMapKind
-where
-    K: Ord,
-{
-    type Map = OrderedMap<K, V>;
-}
-
-pub struct UnorderedMapKind;
-
-impl<K, V> MapKind<K, V> for UnorderedMapKind
-where
-    K: Eq + Hash,
-{
-    type Map = UnorderedMap<K, V>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn do_it<M>()
-    where
-        M: MapKind<char, u8>,
-    {
-        let mut map = M::Map::new();
-        map.insert('a', 1);
-        map.insert('b', 2);
-        map.insert('c', 3);
-
-        assert_eq!(map.get(&'b'), Some(&2));
-        assert_eq!(map.get(&'x'), None);
-    }
-
     #[test]
     fn test() {
-        do_it::<OrderedMapKind>();
-        do_it::<UnorderedMapKind>();
+        let mut bimap = BiMap::<char, u8>::new();
+
+        bimap.insert_unchecked('a', 1);
+        bimap.insert_unchecked('b', 2);
+        bimap.insert_unchecked('c', 3);
+
+        assert_eq!(bimap.get_by_left(&'a'), Some(&1));
+        assert_eq!(bimap.get_by_left(&'x'), None);
+
+        assert_eq!(bimap.get_by_right(&2), Some(&'b'));
+        assert_eq!(bimap.get_by_right(&5), None);
     }
 }
